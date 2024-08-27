@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Google Slides Tamil Question Inserter</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: Arial, sans-serif;
+        }
+        #main-container {
+            display: flex;
+            height: 100%;
+        }
+        #slide-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        #slide-frame {
+            flex: 1;
+            border: none;
+        }
+        #input-container {
+            width: 400px;
+            background-color: #f0f0f0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            transition: width 0.3s ease;
+        }
+        #input-container.hidden {
+            width: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        #url-input, #start-slide-input {
+            width: 100%;
+            margin-bottom: 10px;
+            padding: 5px;
+        }
+        #text-input {
+            width: 100%;
+            height: 150px;
+            margin-bottom: 10px;
+            resize: none;
+        }
+        #questions-table-container {
+            flex-grow: 1;
+            overflow-y: auto;
+            margin-bottom: 10px;
+        }
+        #questions-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+        #questions-table th, #questions-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+        #questions-table th {
+            background-color: #f2f2f2;
+        }
+        #questions-table th:nth-child(1) { width: 50px; }
+        #questions-table th:nth-child(2) { width: auto; }
+        #questions-table th:nth-child(3) { width: 80px; }
+        .question-text {
+            position: relative;
+        }
+        .question-text::after {
+            content: '...';
+            color: #ff0000;
+            position: absolute;
+            right: 0;
+            background-color: #f0f0f0;
+        }
+        .copy-button {
+            padding: 5px 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            width: 100%;
+        }
+        #status {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #e0e0e0;
+        }
+        #insert-button, #load-slides-button, #toggle-panel-button, #auth-button {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        #toggle-panel-button {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+        }
+    </style>
+    <script src="https://apis.google.com/js/api.js"></script>
+    <script src="https://accounts.google.com/gsi/client"></script>
+</head>
+<body>
+    <div id="main-container">
+        <div id="slide-container">
+            <iframe id="slide-frame" src="about:blank"></iframe>
+        </div>
+        <div id="input-container">
+            <input type="text" id="url-input" placeholder="Enter Google Slides URL here">
+            <input type="number" id="start-slide-input" placeholder="Enter starting slide number" min="1">
+            <button id="load-slides-button">Load Slides</button>
+            <button id="auth-button">Authorize</button>
+            <h2>Enter Tamil Questions</h2>
+            <textarea id="text-input" placeholder="Enter Tamil questions here, each starting with the question number (e.g., '1. Tamil question text')"></textarea>
+            <div id="questions-table-container">
+                <table id="questions-table">
+                    <thead>
+                        <tr>
+                            <th>Number</th>
+                            <th>Question</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <button id="insert-button">Insert Questions into Slides</button>
+            <div id="status"></div>
+        </div>
+    </div>
+    <button id="toggle-panel-button">Toggle Panel</button>
+
+    <script>
+        const CLIENT_ID = '186612590443-jnttaqpgdfut6115p9t4dvp9frfa5p72.apps.googleusercontent.com';
+        const API_KEY = 'AIzaSyBRrnC16qlC7YA0ZR9zElBtRNAlg6HAr5c';
+        const DISCOVERY_DOC = 'https://slides.googleapis.com/$discovery/rest?version=v1';
+        const SCOPES = 'https://www.googleapis.com/auth/presentations';
+
+        let tokenClient;
+        let gapiInited = false;
+        let gisInited = false;
+
+        const urlInput = document.getElementById('url-input');
+        const startSlideInput = document.getElementById('start-slide-input');
+        const slideFrame = document.getElementById('slide-frame');
+        const textInput = document.getElementById('text-input');
+        const questionsTable = document.getElementById('questions-table').getElementsByTagName('tbody')[0];
+        const statusDiv = document.getElementById('status');
+        const insertButton = document.getElementById('insert-button');
+        const loadSlidesButton = document.getElementById('load-slides-button');
+        const togglePanelButton = document.getElementById('toggle-panel-button');
+        const inputContainer = document.getElementById('input-container');
+        const authButton = document.getElementById('auth-button');
+
+        const MAX_QUESTION_LENGTH = 30;
+
+        document.addEventListener('DOMContentLoaded', initializeGoogleAPI);
+        loadSlidesButton.addEventListener('click', loadSlides);
+        textInput.addEventListener('input', updateQuestions);
+        document.addEventListener('keydown', handleShortcut);
+        insertButton.addEventListener('click', insertQuestionsIntoSlides);
+        togglePanelButton.addEventListener('click', togglePanel);
+        authButton.addEventListener('click', handleAuthClick);
+
+        function initializeGoogleAPI() {
+            gapiLoaded();
+            gisLoaded();
+        }
+
+        function gapiLoaded() {
+            gapi.load('client', initializeGapiClient);
+        }
+
+        async function initializeGapiClient() {
+            await gapi.client.init({
+                apiKey: API_KEY,
+                discoveryDocs: [DISCOVERY_DOC],
+            });
+            gapiInited = true;
+            maybeEnableButtons();
+        }
+
+        function gisLoaded() {
+            tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: CLIENT_ID,
+                scope: SCOPES,
+                callback: '', // defined later
+            });
+            gisInited = true;
+            maybeEnableButtons();
+        }
+
+        function maybeEnableButtons() {
+            if (gapiInited && gisInited) {
+                authButton.style.display = 'block';
+            }
+        }
+
+        function handleAuthClick() {
+            tokenClient.callback = async (resp) => {
+                if (resp.error !== undefined) {
+                    throw (resp);
+                }
+                await listSlides();
+                updateStatus('Authorized. You can now insert questions into slides.');
+            };
+
+            if (gapi.client.getToken() === null) {
+                tokenClient.requestAccessToken({prompt: 'consent'});
+            } else {
+                tokenClient.requestAccessToken({prompt: ''});
+            }
+        }
+
+        async function listSlides() {
+            let response;
+            try {
+                const presentationId = extractPresentationId(urlInput.value);
+                response = await gapi.client.slides.presentations.get({
+                    presentationId: presentationId
+                });
+            } catch (err) {
+                updateStatus(err.message);
+                return;
+            }
+            const slides = response.result.slides;
+            updateStatus(`Presentation contains ${slides.length} slides.`);
+        }
+
+        function loadSlides() {
+            const url = urlInput.value;
+            if (url.includes('google.com/presentation')) {
+                const embedUrl = url.replace('/edit', '/embed');
+                slideFrame.src = embedUrl + '?rm=minimal';
+                updateStatus('Slides loaded. Note: This is a view-only embed.');
+            } else {
+                alert('Please enter a valid Google Slides URL');
+            }
+        }
+
+        function updateQuestions() {
+            const questions = parseQuestions(textInput.value);
+            questionsTable.innerHTML = '';
+            Object.entries(questions).forEach(([number, text]) => {
+                const row = questionsTable.insertRow();
+                row.insertCell(0).textContent = number;
+                
+                const questionCell = row.insertCell(1);
+                questionCell.className = 'question-text';
+                questionCell.textContent = text.length > MAX_QUESTION_LENGTH ? 
+                    text.substr(0, MAX_QUESTION_LENGTH) : text;
+                questionCell.title = text; // For full text on hover
+
+                const actionCell = row.insertCell(2);
+                const copyButton = document.createElement('button');
+                copyButton.className = 'copy-button';
+                copyButton.textContent = 'Copy';
+                copyButton.onclick = () => copyQuestion(text);
+                actionCell.appendChild(copyButton);
+            });
+        }
+
+        function parseQuestions(input) {
+            const lines = input.split('\n');
+            const questions = {};
+            let currentNumber = null;
+            let currentQuestion = '';
+
+            lines.forEach(line => {
+                const match = line.match(/^(\d+)\.\s*(.*)/);
+                if (match) {
+                    if (currentNumber !== null) {
+                        questions[currentNumber] = currentQuestion.trim();
+                    }
+                    currentNumber = match[1];
+                    currentQuestion = match[2];
+                } else if (currentNumber !== null) {
+                    currentQuestion += '\n' + line;
+                }
+            });
+
+            if (currentNumber !== null) {
+                questions[currentNumber] = currentQuestion.trim();
+            }
+
+            return questions;
+        }
+
+        function copyQuestion(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                updateStatus(`Copied: ${text}`);
+            }).catch(err => {
+                console.error('Failed to copy text: ', err);
+                updateStatus('Failed to copy text. Please try again.');
+            });
+        }
+
+        function handleShortcut(event) {
+            if (event.shiftKey && !isNaN(event.key)) {
+                const questionNumber = event.key;
+                const questions = parseQuestions(textInput.value);
+                if (questions[questionNumber]) {
+                    copyQuestion(questions[questionNumber]);
+                }
+            }
+        }
+
+        async function insertQuestionsIntoSlides() {
+            const questions = parseQuestions(textInput.value);
+            const startSlide = parseInt(startSlideInput.value) || 1;
+            const presentationId = extractPresentationId(urlInput.value);
+
+            if (!presentationId) {
+                updateStatus('Invalid presentation URL. Please check and try again.');
+                return;
+            }
+
+            try {
+                const slides = await getSlides(presentationId);
+                const requests = [];
+
+                Object.entries(questions).forEach(([number, text], index) => {
+                    const slideIndex = startSlide + index - 1;
+                    if (slideIndex < slides.length) {
+                        const request = createInsertTextRequest(slides[slideIndex].objectId, text);
+                        requests.push(request);
+                    }
+                });
+
+                if (requests.length > 0) {
+                    await batchUpdate(presentationId, requests);
+                    updateStatus('Questions inserted successfully.');
+                } else {
+                    updateStatus('No slides available to insert questions.');
+                }
+            } catch (error) {
+                console.error('Error inserting questions:', error);
+                updateStatus('Error inserting questions. Please try again.');
+            }
+        }
+
+        async function getSlides(presentationId) {
+            const response = await gapi.client.slides.presentations.get({
+                presentationId: presentationId
+            });
+            return response.result.slides;
+        }
+
+        function createInsertTextRequest(slideId, text) {
+            return {
+                insertText: {
+                    objectId: slideId,
+                    insertionIndex: 0,
+                    text: text + '\n'
+                }
+            };
+        }
+
+        async function batchUpdate(presentationId, requests) {
+            await gapi.client.slides.presentations.batchUpdate({
+                presentationId: presentationId,
+                requests: requests
+            });
+        }
+
+        function extractPresentationId(url) {
+            const match = url.match(/\/presentation\/d\/([a-zA-Z0-9-_]+)/);
+            return match ? match[1] : null;
+        }
+
+        function updateStatus(message) {
+            statusDiv.textContent = message;
+        }
+
+        function togglePanel() {
+            inputContainer.classList.toggle('hidden');
+            if (inputContainer.classList.contains('hidden')) {
+                togglePanelButton.textContent = 'Show Panel';
+            } else {
+                togglePanelButton.textContent = 'Hide Panel';
+            }
+        }
+    </script>
+</body>
+</html>
