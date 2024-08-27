@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Comprehensive Tamil Question Manager for Google Slides</title>
+    <title>Tamil Question Manager for Google Slides</title>
     <style>
         body, html {
             margin: 0;
@@ -188,11 +188,6 @@
         authButton.addEventListener('click', handleAuthClick);
 
         function initializeGoogleAPI() {
-            gapiLoaded();
-            gisLoaded();
-        }
-
-        function gapiLoaded() {
             gapi.load('client', initializeGapiClient);
         }
 
@@ -210,55 +205,28 @@
             }
         }
 
-        function gisLoaded() {
-            tokenClient = google.accounts.oauth2.initTokenClient({
-                client_id: CLIENT_ID,
-                scope: SCOPES,
-                callback: '', // defined later
-            });
-            gisInited = true;
-            maybeEnableButtons();
-        }
-
         function maybeEnableButtons() {
-            if (gapiInited && gisInited) {
+            if (gapiInited) {
                 authButton.style.display = 'block';
             }
         }
 
         function handleAuthClick() {
-            tokenClient.callback = async (resp) => {
-                if (resp.error !== undefined) {
-                    throw (resp);
-                }
-                await listSlides();
-                updateStatus('Authorized. You can now insert questions into slides.');
-                authButton.classList.add('authorized');
-                localStorage.setItem('gapi_token', JSON.stringify(gapi.client.getToken()));
-            };
-
-            if (gapi.client.getToken() === null) {
-                tokenClient.requestAccessToken({prompt: 'consent'});
-            } else {
-                tokenClient.requestAccessToken({prompt: ''});
-            }
+            tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: CLIENT_ID,
+                scope: SCOPES,
+                callback: handleAuthResponse,
+            });
+            tokenClient.requestAccessToken({prompt: ''});
         }
 
-        async function listSlides() {
-            try {
-                const presentationId = extractPresentationId(urlInput.value);
-                if (!presentationId) {
-                    throw new Error('Invalid presentation URL');
-                }
-                const response = await gapi.client.slides.presentations.get({
-                    presentationId: presentationId
-                });
-                const slides = response.result.slides;
-                updateStatus(`Presentation contains ${slides.length} slides.`);
-            } catch (err) {
-                console.error('Error listing slides:', err);
-                updateStatus(`Error listing slides: ${err.message}`);
+        function handleAuthResponse(resp) {
+            if (resp.error !== undefined) {
+                throw resp;
             }
+            authButton.classList.add('authorized');
+            localStorage.setItem('gapi_token', JSON.stringify(gapi.client.getToken()));
+            updateStatus('Authorized. You can now insert questions into slides.');
         }
 
         function loadSlides() {
@@ -350,19 +318,35 @@
             }
 
             try {
-                const slides = await getSlides(presentationId);
+                const presentation = await gapi.client.slides.presentations.get({presentationId});
+                const slides = presentation.result.slides;
                 const requests = [];
 
                 Object.entries(questions).forEach(([number, text], index) => {
                     const slideIndex = startSlide + index - 1;
                     if (slideIndex < slides.length) {
-                        const request = createInsertTextRequest(slides[slideIndex].objectId, text);
-                        requests.push(request);
+                        const slide = slides[slideIndex];
+                        const textBoxes = slide.pageElements.filter(
+                            element => element.shape && element.shape.shapeType === 'TEXT_BOX'
+                        );
+                        if (textBoxes.length > 0) {
+                            const firstTextBox = textBoxes[0];
+                            requests.push({
+                                insertText: {
+                                    objectId: firstTextBox.objectId,
+                                    insertionIndex: 0,
+                                    text: text + '\n'
+                                }
+                            });
+                        }
                     }
                 });
 
                 if (requests.length > 0) {
-                    await batchUpdate(presentationId, requests);
+                    await gapi.client.slides.presentations.batchUpdate({
+                        presentationId: presentationId,
+                        requests: requests
+                    });
                     updateStatus('Questions inserted successfully.');
                 } else {
                     updateStatus('No slides available to insert questions.');
@@ -370,40 +354,6 @@
             } catch (error) {
                 console.error('Error inserting questions:', error);
                 updateStatus(`Error inserting questions: ${error.message}`);
-            }
-        }
-
-        async function getSlides(presentationId) {
-            try {
-                const response = await gapi.client.slides.presentations.get({
-                    presentationId: presentationId
-                });
-                return response.result.slides;
-            } catch (error) {
-                console.error('Error getting slides:', error);
-                throw new Error('Failed to get slides. Please check your permissions and try again.');
-            }
-        }
-
-        function createInsertTextRequest(slideId, text) {
-            return {
-                insertText: {
-                    objectId: slideId,
-                    insertionIndex: 0,
-                    text: text + '\n'
-                }
-            };
-        }
-
-        async function batchUpdate(presentationId, requests) {
-            try {
-                await gapi.client.slides.presentations.batchUpdate({
-                    presentationId: presentationId,
-                    requests: requests
-                });
-            } catch (error) {
-                console.error('Error in batch update:', error);
-                throw new Error('Failed to update slides. Please check your permissions and try again.');
             }
         }
 
@@ -435,10 +385,6 @@
                     console.log('Token restored from local storage');
                     authButton.classList.add('authorized');
                     updateStatus('Authorization restored. You can now insert questions into slides.');
-                    listSlides().catch(err => {
-                        console.error('Error listing slides after token restoration:', err);
-                        handleTokenError();
-                    });
                 } catch (error) {
                     console.error('Error parsing or setting saved token:', error);
                     handleTokenError();
@@ -452,9 +398,6 @@
             authButton.classList.remove('authorized');
             updateStatus('Authorization expired. Please authorize again.');
         }
-
-        // Initialize the application
-        initializeGoogleAPI();
     </script>
 </body>
 </html>
