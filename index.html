@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Improved Google Slides Tamil Question Inserter</title>
+    <title>Comprehensive Tamil Question Manager for Google Slides</title>
     <style>
         body, html {
             margin: 0;
@@ -13,10 +13,10 @@
         }
         #main-container {
             display: flex;
-            height: 100%;
+            height: 100vh;
         }
         #slide-container {
-            flex: 1;
+            flex: 2;
             display: flex;
             flex-direction: column;
         }
@@ -108,6 +108,18 @@
             top: 10px;
             right: 10px;
             z-index: 1000;
+        }
+        #auth-button::after {
+            content: '';
+            display: inline-block;
+            width: 15px;
+            height: 15px;
+            margin-left: 10px;
+            border-radius: 50%;
+            background-color: #ccc;
+        }
+        #auth-button.authorized::after {
+            background-color: #4CAF50;
         }
     </style>
     <script src="https://apis.google.com/js/api.js"></script>
@@ -221,6 +233,8 @@
                 }
                 await listSlides();
                 updateStatus('Authorized. You can now insert questions into slides.');
+                authButton.classList.add('authorized');
+                localStorage.setItem('gapi_token', JSON.stringify(gapi.client.getToken()));
             };
 
             if (gapi.client.getToken() === null) {
@@ -411,6 +425,36 @@
                 togglePanelButton.textContent = 'Hide Panel';
             }
         }
+
+        // Check for saved token on page load
+        window.onload = function() {
+            const savedToken = localStorage.getItem('gapi_token');
+            if (savedToken) {
+                try {
+                    gapi.client.setToken(JSON.parse(savedToken));
+                    console.log('Token restored from local storage');
+                    authButton.classList.add('authorized');
+                    updateStatus('Authorization restored. You can now insert questions into slides.');
+                    listSlides().catch(err => {
+                        console.error('Error listing slides after token restoration:', err);
+                        handleTokenError();
+                    });
+                } catch (error) {
+                    console.error('Error parsing or setting saved token:', error);
+                    handleTokenError();
+                }
+            }
+        }
+
+        function handleTokenError() {
+            localStorage.removeItem('gapi_token');
+            gapi.client.setToken(null);
+            authButton.classList.remove('authorized');
+            updateStatus('Authorization expired. Please authorize again.');
+        }
+
+        // Initialize the application
+        initializeGoogleAPI();
     </script>
 </body>
 </html>
