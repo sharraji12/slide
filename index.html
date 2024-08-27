@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Google Slides Tamil Question Inserter</title>
+    <title>Improved Google Slides Tamil Question Inserter</title>
     <style>
         body, html {
             margin: 0;
@@ -147,7 +147,7 @@
         const CLIENT_ID = '186612590443-jnttaqpgdfut6115p9t4dvp9frfa5p72.apps.googleusercontent.com';
         const API_KEY = 'AIzaSyBRrnC16qlC7YA0ZR9zElBtRNAlg6HAr5c';
         const DISCOVERY_DOC = 'https://slides.googleapis.com/$discovery/rest?version=v1';
-        const SCOPES = 'https://www.googleapis.com/auth/presentations';
+        const SCOPES = 'https://www.googleapis.com/auth/presentations https://www.googleapis.com/auth/drive.file';
 
         let tokenClient;
         let gapiInited = false;
@@ -185,12 +185,17 @@
         }
 
         async function initializeGapiClient() {
-            await gapi.client.init({
-                apiKey: API_KEY,
-                discoveryDocs: [DISCOVERY_DOC],
-            });
-            gapiInited = true;
-            maybeEnableButtons();
+            try {
+                await gapi.client.init({
+                    apiKey: API_KEY,
+                    discoveryDocs: [DISCOVERY_DOC],
+                });
+                gapiInited = true;
+                maybeEnableButtons();
+            } catch (err) {
+                console.error('Error initializing GAPI client:', err);
+                updateStatus('Error initializing Google API. Please refresh and try again.');
+            }
         }
 
         function gisLoaded() {
@@ -226,18 +231,20 @@
         }
 
         async function listSlides() {
-            let response;
             try {
                 const presentationId = extractPresentationId(urlInput.value);
-                response = await gapi.client.slides.presentations.get({
+                if (!presentationId) {
+                    throw new Error('Invalid presentation URL');
+                }
+                const response = await gapi.client.slides.presentations.get({
                     presentationId: presentationId
                 });
+                const slides = response.result.slides;
+                updateStatus(`Presentation contains ${slides.length} slides.`);
             } catch (err) {
-                updateStatus(err.message);
-                return;
+                console.error('Error listing slides:', err);
+                updateStatus(`Error listing slides: ${err.message}`);
             }
-            const slides = response.result.slides;
-            updateStatus(`Presentation contains ${slides.length} slides.`);
         }
 
         function loadSlides() {
@@ -303,7 +310,7 @@
             navigator.clipboard.writeText(text).then(() => {
                 updateStatus(`Copied: ${text}`);
             }).catch(err => {
-                console.error('Failed to copy text: ', err);
+                console.error('Failed to copy text:', err);
                 updateStatus('Failed to copy text. Please try again.');
             });
         }
@@ -348,15 +355,20 @@
                 }
             } catch (error) {
                 console.error('Error inserting questions:', error);
-                updateStatus('Error inserting questions. Please try again.');
+                updateStatus(`Error inserting questions: ${error.message}`);
             }
         }
 
         async function getSlides(presentationId) {
-            const response = await gapi.client.slides.presentations.get({
-                presentationId: presentationId
-            });
-            return response.result.slides;
+            try {
+                const response = await gapi.client.slides.presentations.get({
+                    presentationId: presentationId
+                });
+                return response.result.slides;
+            } catch (error) {
+                console.error('Error getting slides:', error);
+                throw new Error('Failed to get slides. Please check your permissions and try again.');
+            }
         }
 
         function createInsertTextRequest(slideId, text) {
@@ -370,10 +382,15 @@
         }
 
         async function batchUpdate(presentationId, requests) {
-            await gapi.client.slides.presentations.batchUpdate({
-                presentationId: presentationId,
-                requests: requests
-            });
+            try {
+                await gapi.client.slides.presentations.batchUpdate({
+                    presentationId: presentationId,
+                    requests: requests
+                });
+            } catch (error) {
+                console.error('Error in batch update:', error);
+                throw new Error('Failed to update slides. Please check your permissions and try again.');
+            }
         }
 
         function extractPresentationId(url) {
@@ -383,6 +400,7 @@
 
         function updateStatus(message) {
             statusDiv.textContent = message;
+            console.log('Status:', message);
         }
 
         function togglePanel() {
